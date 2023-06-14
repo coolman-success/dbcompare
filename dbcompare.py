@@ -3,7 +3,8 @@ from pymysql.connections import Connection
 from pymysql.cursors import Cursor
 from constants import DB1_CREDS, DB2_CREDS
 
-def compare_databases(db1_conn: Connection, db2_conn: Connection):
+# Compare two different databases
+def compare_databases(db1_conn: Connection, db2_conn: Connection) -> None:
     # Fetch schema information for database 1
     db1_schema = fetch_schema(db1_conn)
 
@@ -15,13 +16,22 @@ def compare_databases(db1_conn: Connection, db2_conn: Connection):
 
     # Print the comparison report
     comparison_report = generate_report(db1_conn, db2_conn, same, diffs, db1_only, db2_only)
-    print(comparison_report)
+    # print(comparison_report)
+    print('Writing comparison report to report.txt...')
+    write_outputs_to_file('report.txt', comparison_report)
+
+    # Generate SQLs to make the databases consistent
+    sql_statements = generate_sql_statements(diffs, db1_only, db2_only)
+    # print(sql_statements)
+    print('Writing SQL statements to sync.sql...')
+    write_outputs_to_file('sync.sql', sql_statements)
 
     # Close the database connections
     db1_conn.close()
     db2_conn.close()
 
-def fetch_schema(db_conn: Connection):
+# Fetch table schemas from a connection
+def fetch_schema(db_conn: Connection) -> dict:
     db_name = db_conn.db.decode('ascii')
     print(f'Getting table schemas of database `{db_name}` from {db_conn.host}...')
 
@@ -47,7 +57,8 @@ def fetch_schema(db_conn: Connection):
 
     return schema
 
-def get_table_schema(cursor: Cursor):
+# Get table schema in set
+def get_table_schema(cursor: Cursor) -> set:
     table_schema = set()
     # table_schema = []
     # keys = [keys[0] for keys in cursor.description]
@@ -60,7 +71,7 @@ def get_table_schema(cursor: Cursor):
     return table_schema
 
 # Compare the schema details
-def compare_shema(db1_schema, db2_schema):
+def compare_shema(db1_schema: dict, db2_schema: dict) -> tuple:
 
     db1_only, db2_only, diffs, same = [], [], [], []
 
@@ -75,14 +86,14 @@ def compare_shema(db1_schema, db2_schema):
         else:
             db1_only.append(table_name)
 
-    for table_name in db2_schema:
+    for table_name, columns in db2_schema.items():
         if table_name not in db1_schema:
-            db2_only.append(table_name)
+            db2_only.append((table_name, columns))
 
     return same, diffs, db1_only, db2_only
 
 # Generate the comparison report based on the schema details
-def generate_report(db1_conn, db2_conn, same, diffs, db1_only, db2_only):
+def generate_report(db1_conn: Connection, db2_conn: Connection, same: list, diffs: list, db1_only: list, db2_only: list) -> str:
     report = ""
     db1_name = db1_conn.db.decode('ascii')
     db2_name = db2_conn.db.decode('ascii')
@@ -92,20 +103,21 @@ def generate_report(db1_conn, db2_conn, same, diffs, db1_only, db2_only):
         report += generate_compare_report(db1_conn, db2_conn, diffs)
 
     if len(db1_only):
-        report += f"\n{len(db1_only)} tables exist in `{db1_name}` from {db1_conn.host} only:\n  "
-        report += "\n  ".join(db1_only)
+        report += f"\n{len(db1_only)} tables exist in `{db1_name}` from {db1_conn.host} only:\n    "
+        report += "\n    ".join(db1_only)
 
     if len(db2_only):
-        report += f"\n{len(db2_only)} tables exist in `{db2_name}` from {db2_conn.host} only:\n  "
-        report += "\n  ".join(db2_only)
+        report += f"\n{len(db2_only)} tables exist in `{db2_name}` from {db2_conn.host} only:\n    "
+        report += "\n    ".join([tbl for tbl, _ in db2_only])
 
     if len(same):
-        report += f"\n{len(same)} tables are equal:\n  "
-        report += "\n  ".join(same)
+        report += f"\n{len(same)} tables are equal:\n    "
+        report += "\n    ".join(same)
 
     return report
 
-def generate_compare_report(db1_conn, db2_conn, diffs):
+# Generate comparison report for different tables
+def generate_compare_report(db1_conn: Connection, db2_conn: Connection, diffs: list) -> str:
     report = ""
     db1_title = db1_conn.db.decode('ascii') + ' of ' + db1_conn.host
     db2_title = db2_conn.db.decode('ascii') + ' of ' + db2_conn.host
@@ -129,16 +141,78 @@ def generate_compare_report(db1_conn, db2_conn, diffs):
             if key not in x_only_keys:
                 y_new.append([i for i in y_only if i[0] == key])
         
-        report += f"\n  {table_name}\n"
-        report += f"  {db1_title[:50]:^50} | {db2_title[:50]:^50}"
+        report += f"\n    {table_name}\n"
+        report += f"    {db1_title[:50]:^50} | {db2_title[:50]:^50}"
         if len(deepdiff):
-            report += "".join(["\n  " + f'{str(item[0])[:50]:50} | {str(item[1])[:50]:50}' for item in deepdiff])
+            report += "".join(["\n    " + f'{str(item[0])[:50]:50} | {str(item[1])[:50]:50}' for item in deepdiff])
         if len(x_new):
-            report += "".join(["\n  " + f'{str(item[0])[:50]:50} |' for item in x_new])
+            report += "".join(["\n    " + f'{str(item[0])[:50]:50} |' for item in x_new])
         if len(y_new):
-            report += "".join(["\n  " + f'{" "*50} | {str(item[0])[:50]:50}' for item in y_new])
+            report += "".join(["\n    " + f'{" "*50} | {str(item[0])[:50]:50}' for item in y_new])
 
     return report
+
+# Generate SQL statements to make two databases consistent
+def generate_sql_statements(diffs: list, db1_only: list, db2_only: list) -> str:
+    sql = ""
+
+    if len(db1_only):
+        sql += "/* Drop tables only in the first database */\n"
+        sql += "\n".join([f"DROP TABLE {tbl};" for tbl in db1_only])
+
+    if len(db2_only):
+        sql += "/* Create tables only in the second database */\n"
+        sql += generate_create_statements(db2_only)
+
+    if len(diffs):
+        sql += "/* Alter tables different from the second database */\n"
+        sql += generate_alter_statements(diffs)
+
+    return sql
+
+# Generate create table statements
+def generate_create_statements(db2_only: list) -> str:
+    sql = ""
+
+    for tbl, columns in db2_only:
+        sql += f"CREATE TABLE `{tbl}` (\n"
+
+        for field, type, nullable, key, default, extra in columns:
+            sql += f"    `{field}` {type}{'' if nullable=='YES' else ' NOT NULL'}{' PRIMARY KEY' if key=='PRI' else ''}{'' if default==None else ' DEFAULT '+default}{'' if extra=='' else ' ' + extra},\n"
+
+        sql = sql[:-2] + ");\n"
+
+    return sql
+
+# Generate SQL statements for table updates
+def generate_alter_statements(diffs: list) -> str:
+    sql = ""
+    
+    for tbl, columns1, columns2 in diffs:
+        sql += f"ALTER TABLE {tbl}\n"
+    
+        db1_only_cols = columns1 - columns2
+        db2_only_cols = columns2 - columns1
+        fields1 = [field for field, *_ in db1_only_cols]
+        fields2 = [field for field, *_ in db2_only_cols]
+    
+        for field in fields1:
+            if field not in fields2:
+                sql += f"    DROP COLUMN `{field}`,\n"
+        
+        for field, type, nullable, key, default, extra in db2_only_cols:
+            if field in fields1:
+                sql += f"    MODIFY COLUMN `{field}` {type}{'' if nullable=='YES' else ' NOT NULL'}{' PRIMARY KEY' if key=='PRI' else ''}{'' if default==None else ' DEFAULT '+default}{'' if extra=='' else ' ' + extra},\n"
+            else:
+                sql += f"    ADD COLUMN `{field}` {type}{'' if nullable=='YES' else ' NOT NULL'}{' PRIMARY KEY' if key=='PRI' else ''}{'' if default==None else ' DEFAULT '+default}{'' if extra=='' else ' ' + extra},\n"
+    
+        sql = sql[:-2] + ';\n'
+    
+    return sql
+
+def write_outputs_to_file(filename: str, content: str) -> None:
+    with open(filename, 'w+') as f:
+        f.write(content)
 
 # Connect to the databases
 db1_conn = pymysql.connect(
