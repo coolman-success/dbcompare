@@ -94,6 +94,8 @@ def compare_shema(db1_schema: dict, db2_schema: dict) -> tuple:
 
 # Generate the comparison report based on the schema details
 def generate_report(db1_conn: Connection, db2_conn: Connection, same: list, diffs: list, db1_only: list, db2_only: list) -> str:
+    print("Generating comparison report...")
+
     report = ""
     db1_name = db1_conn.db.decode('ascii')
     db2_name = db2_conn.db.decode('ascii')
@@ -114,13 +116,14 @@ def generate_report(db1_conn: Connection, db2_conn: Connection, same: list, diff
         report += f"\n{len(same)} tables are equal:\n    "
         report += "\n    ".join(same)
 
+    print("Comparison report generation completed")
     return report
 
 # Generate comparison report for different tables
 def generate_compare_report(db1_conn: Connection, db2_conn: Connection, diffs: list) -> str:
-    report = ""
     db1_title = db1_conn.db.decode('ascii') + ' of ' + db1_conn.host
     db2_title = db2_conn.db.decode('ascii') + ' of ' + db2_conn.host
+    lines = [(db1_title, db2_title)]
     
     for diff in diffs:
         table_name, x, y = diff
@@ -141,14 +144,30 @@ def generate_compare_report(db1_conn: Connection, db2_conn: Connection, diffs: l
             if key not in x_only_keys:
                 y_new.append([i for i in y_only if i[0] == key])
         
-        report += f"\n    {table_name}\n"
-        report += f"    {db1_title[:50]:^50} | {db2_title[:50]:^50}"
+        # report += f"\n    {table_name}\n"
+        lines += [(table_name,)]
+        # report += f"    {db1_title[:50]:^50} | {db2_title[:50]:^50}"
         if len(deepdiff):
-            report += "".join(["\n    " + f'{str(item[0])[:50]:50} | {str(item[1])[:50]:50}' for item in deepdiff])
+            lines += [(field1, field2) for field1, field2 in deepdiff]
         if len(x_new):
-            report += "".join(["\n    " + f'{str(item[0])[:50]:50} |' for item in x_new])
+            lines += [(field, None) for field in x_new]
         if len(y_new):
-            report += "".join(["\n    " + f'{" "*50} | {str(item[0])[:50]:50}' for item in y_new])
+            lines += [(None, field) for field in y_new]
+
+    maxlen1 = len(max([str(line[0]) for line in lines if len(line)==2], key=len))
+    maxlen2 = len(max([str(line[1]) for line in lines if len(line)==2], key=len))
+
+    report = f"╔═{'═'*maxlen1}═╤═{'═'*maxlen2}═╗\n"
+    titles = lines.pop(0)
+    report += f"║ {titles[0]:^{maxlen1}} │ {titles[1]:^{maxlen2}} ║\n"
+    for line in lines:
+        if len(line) == 2:
+            report += f"║ {str(line[0]):{maxlen1}} │ {str(line[1]):{maxlen2}} ║\n"
+        else:
+            report += f"╟─{'─'*maxlen1}─┴─{'─'*maxlen2}─╢\n"
+            report += f"║ table: {str(line[0]):{maxlen1 + maxlen2 - 4}} ║\n"
+            report += f"╟─{'─'*maxlen1}─┬─{'─'*maxlen2}─╢\n"
+    report += f"╚═{'═'*maxlen1}═╧═{'═'*maxlen2}═╝\n"
 
     return report
 
@@ -211,7 +230,7 @@ def generate_alter_statements(diffs: list) -> str:
     return sql
 
 def write_outputs_to_file(filename: str, content: str) -> None:
-    with open(filename, 'w+') as f:
+    with open(filename, 'w+', encoding="utf-8") as f:
         f.write(content)
 
 # Connect to the databases
